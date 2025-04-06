@@ -57,7 +57,6 @@ class PerspectiveTransformer:
         [1023, 720],  # Bottom-right
         [0, 720]     # Bottom-left
     ])
-    
     def inverse_perspective_mapping(self,segmentation_whole):
         output_size = (1024,720)
 
@@ -67,3 +66,34 @@ class PerspectiveTransformer:
         # rightwarped_segmentation = cv2.warpPerspective(segmentation_whole,self.right_h,(540,720))
         # combined = np.hstack((leftwarped_segementation, rightwarped_segmentation))
         return leftwarped_segementation
+
+class PerspectiveTransformerGlobal:
+    def __init__(self):
+        self.left_source = np.float32([
+        [200, 318],   # Top left
+        [723, 318],   # Top right
+        [1023, 576],  # Bottom right
+        [0, 576]      # Bottom left
+    ])
+
+        self.left_dest = np.float32([
+        [0, 0],      # Top-left
+        [1023, 0],    # Top-right
+        [1023, 720],  # Bottom-right
+        [0, 720]     # Bottom-left
+    ])
+        self.traversible_class = [1,0]
+
+    def inverse_perspective_mapping(self,segmentation_whole):
+        output_size = (1024,720)
+
+        M_left = cv2.getPerspectiveTransform(self.left_source, self.left_dest)
+        segmentation_mask = self.isolate_class(segmentation_whole )
+        leftwarped_segementation = cv2.warpPerspective(segmentation_mask,M_left, output_size)
+        # rightwarped_segmentation = cv2.warpPerspective(segmentation_whole,self.right_h,(540,720))
+        # combined = np.hstack((leftwarped_segementation, rightwarped_segmentation))
+        return leftwarped_segementation
+    
+    def isolate_class(self, segmentation_mask ):
+        return np.isin(segmentation_mask, self.traversible_class).astype(np.uint8)
+        

@@ -3,7 +3,7 @@ import numpy as np
 import math
 from multiprocessing import Queue
 from motion_planner.base_policy import BasePolicy
-from motion_planner.configs import InputKeys
+# from motion_planner.configs import InputKeys
 import json
 
 
@@ -23,7 +23,7 @@ def motion(x, u, dt):
 
 
 class DWA(BasePolicy):
-    def __init__(self, v_range=(0., 1.), a_range=(-1.0, 1.0), a_max=(3., 5.), time_step=0.1, predict_time=2.0,
+    def __init__(self, v_range=(0., .8), a_range=(-1.0, 1.0), a_max=(3., 5.), time_step=0.1, predict_time=2.0,
                  to_goal_cost_gain=3.0, speed_cost_gain=0.1, obs_cost_gain=0.3, radius=0.5, goal_threshold=0.5,
                  v_resolution=0.3, w_resolution=0.3, lidar_fov=(-2 * math.pi / 3, 2 * math.pi / 3), lidar_size=341):
         super(DWA, self).__init__(goal_threshold=goal_threshold, time_step=time_step)
@@ -41,10 +41,10 @@ class DWA(BasePolicy):
 
         self.robot_radius = radius  # [m]
 
-        self.lidar_fov = lidar_fov
-        self.lidar_size = lidar_size
-        self.lidar_angles = (lidar_fov[1] - lidar_fov[0]) / self.lidar_size * np.array(range(self.lidar_size)) + lidar_fov[0]
-        self.start_time = time.time()
+        # self.lidar_fov = lidar_fov
+        # self.lidar_size = lidar_size
+        # self.lidar_angles = (lidar_fov[1] - lidar_fov[0]) / self.lidar_size * np.array(range(self.lidar_size)) + lidar_fov[0]
+        # self.start_time = time.time()
 
         self.velocity_num = 0
 
@@ -120,19 +120,86 @@ class DWA(BasePolicy):
     def calc_to_goal_cost(self, traj, goal):
         return calculate_dist(goal, traj[-1])
 
-    def convert_lidar_to_vertices(self, lidar, pose):
-        lidar[np.where(lidar > 10)] = 0
-        lidar = lidar
-        xs = np.array(lidar) * np.cos(self.lidar_angles)
-        ys = np.array(lidar) * np.sin(self.lidar_angles)
-        global_xs = math.cos(pose[-1]) * xs - math.sin(pose[-1]) * ys + pose[0]
-        global_ys = math.sin(pose[-1]) * xs + math.cos(pose[-1]) * ys + pose[1]
-        vertices = np.transpose(np.array([global_xs, global_ys]))
-        # plt.figure(1)
-        # plt.plot(global_xs, global_ys)
-        # plt.show()
-        return vertices[np.where(lidar>0)]
-        # return vertices
+    # def convert_lidar_to_vertices(self, lidar, pose):
+    #     lidar[np.where(lidar > 10)] = 0
+    #     lidar = lidar
+    #     xs = np.array(lidar) * np.cos(self.lidar_angles)
+    #     ys = np.array(lidar) * np.sin(self.lidar_angles)
+    #     global_xs = math.cos(pose[-1]) * xs - math.sin(pose[-1]) * ys + pose[0]
+    #     global_ys = math.sin(pose[-1]) * xs + math.cos(pose[-1]) * ys + pose[1]
+    #     vertices = np.transpose(np.array([global_xs, global_ys]))
+    #     # plt.figure(1)
+    #     # plt.plot(global_xs, global_ys)
+    #     # plt.show()
+    #     return vertices[np.where(lidar>0)]
+    #     # return vertices
+    
+    def pixel_to_metric(self,px, py, robot_pos, theta, rwidth=0.05, rheight=0.05, gap=0.5):
+        #TODO: Include in yaml
+        # Add the gap (empty space) to the robot's position
+        x_local = px * rwidth  # Convert pixel x to metric x
+        y_local = py * rheight  # Convert pixel y to metric y
+        gap_x = gap * math.cos(theta)
+        gap_y = gap * math.sin(theta)
+        x_rot = x_local * math.cos(theta) - y_local * math.sin(theta)
+        y_rot = x_local * math.sin(theta) + y_local * math.cos(theta)
+        x_metric = robot_pos[0] + x_rot + gap_x  # Global x
+        y_metric = robot_pos[1] + y_rot + gap_y  # Global y
+        return x_metric, y_metric
+    
+    def pad_top_cols(self, bev_map, target_width):
+        height, current_width = bev_map.shape
+        # print(f"Current width: {current_width}, Target width: {target_width}")
+
+        total_extra_columns = target_width - current_width
+        if total_extra_columns > 0:
+            left_pad = total_extra_columns // 2
+            right_pad = total_extra_columns - left_pad
+            bev_map = np.pad(bev_map, ((0, 0), (left_pad, right_pad)), mode='edge')
+
+        # print(f"Padded bev_map shape: {bev_map.shape}")
+        return bev_map
+    def downsample_bev(self,bev_map, grid_size_px_x = 19, grid_size_px_y =16):
+        bev_map = self.pad_top_cols(bev_map,1026)
+        height, width = bev_map.shape
+        print(height,width)
+        downsampled_grid = np.zeros((height // grid_size_px_y, width // grid_size_px_x))
+        
+        #TODO: don't do On^2
+        for i in range(0, height, grid_size_px_y):
+            for j in range(0, width, grid_size_px_x):
+                # Take the region of the grid and check if there's any obstacle (non-zero pixel)
+                region = bev_map[i:i+grid_size_px_y, j:j+grid_size_px_x]
+                downsampled_grid[i // grid_size_px_y, j // grid_size_px_x] = np.max(region)  # Max indicates obstacle
+
+        return downsampled_grid
+
+    def grid_to_global(self,downsampled_grid, robot_pos, theta):
+        # Convert downsampled grid coordinates to global coordinates
+        grad_dict = {}
+        for i in range(downsampled_grid.shape[0]):
+            for j in range(downsampled_grid.shape[1]):
+                x_global, y_global = self.pixel_to_metric(j, i, robot_pos, theta)
+                grad_dict[(x_global, y_global)] = downsampled_grid[i, j]
+        return grad_dict
+
+    def local_goal(self, global_dict, node_goal):
+        vertices = np.array([pos for pos, value in global_dict.items() if value == 1])  # Shape (N, 2)
+        if vertices.shape[0] == 0:
+            return None  # No valid traversable points
+        distances = np.sum((vertices - np.array(node_goal))**2, axis=1)
+        min_index = np.argmin(distances)
+        return tuple(vertices[min_index])  
+ 
+    def bev_to_vertices(self,bev_map, robot_pos, node_goal, theta):
+        downsampled_grid = self.downsample_bev(bev_map)
+        global_dict = self.grid_to_global(downsampled_grid, robot_pos=robot_pos, theta=theta)
+        local_goal = self.local_goal(global_dict, node_goal)
+        if local_goal == None:
+            return None, None
+        vertices = np.array([pos for pos, value in global_dict.items() if value == 0])  # Shape (N, 2)
+        # vertices = np.transpose(vertices) 
+        return vertices, local_goal
 
     def step(self, obs):
         """
@@ -141,14 +208,14 @@ class DWA(BasePolicy):
         velocity: linear, angular
         obstacles: lidar data
         """
-        goal = obs[InputKeys.goal]
-        pose = obs[InputKeys.pose]
-        velocity = obs[InputKeys.velocity]
-        lidar = obs[InputKeys.lidar]
+        goal = obs["goal"]
+        pose = obs["pose"] # this should be constant with the local frame , we donot know global frame for now
+        velocity = obs["velocity"]
+        lidar = obs["bev_mask"]
         position = [pose[0], pose[1], pose[-1], 0, 0]
-        vertices = self.convert_lidar_to_vertices(pose=pose, lidar=lidar)
+        vertices, local_goal = self.bev_to_vertices(lidar,(pose[0],pose[1]),goal,pose[-1])
         dw = self.get_dynamic_window(current_v=velocity[0], current_a=velocity[1])
-        action = self._predict(x=position, u=velocity, dw=dw, ob=vertices, goal=goal)
+        action = self._predict(x=position, u=velocity, dw=dw, ob=vertices, goal=local_goal)
         return action
 
     # def step(self, obs):

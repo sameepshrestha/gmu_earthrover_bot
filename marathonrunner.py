@@ -7,18 +7,15 @@ from dwa_planner import DWAPlanner, pixel_to_metric, metric_to_pixel, local_goal
 import numpy as np
 import time
 import matplotlib.pyplot as plt
-from helper_func import compute_velocity_from_rpms, calculate_bearing, normalize_velocity, MovingAverage, ImcrementatlVisualizer, visualize_trajectory_with_opencv
+from helper_func import compute_velocity_from_rpms, test_all_heading_candidates, save_transformed_image, MovingAverage, ImcrementatlVisualizer, visualize_trajectory_with_opencv
 from bot_controller import BotController
 # from inf import ImageSegmenter
 import networkx as nx
 import matplotlib.pyplot as plt
 from shapely.geometry import Point, LineString
 import csv
-from magnetometer_calibration import calibrate_magnetometer
 from collections import deque
 from botpublisher import ROSPublisher
-from matplotlib.animation import FuncAnimation
-Recalibrate = False
 import time 
 #gps collection and processing 
 global_counter =  0 
@@ -30,12 +27,8 @@ reveiver = BotReceiver(base_url)
 ptransform = PerspectiveTransformer()
 Segmentationmodel = Mask2FormerSegmentor()
 planner = DWAPlanner()
-resolution = 0.00539
-start_gps, start_orientation  = reveiver.moving_average(20)
-# destination_gps = reveiver.get_checkpoint()
-# print(f"destination_gps: {destination_gps}")
-# [0]
-destination_gps =(38.827675, -77.305605)# (38.827744, -77.305949)
+start_gps, start_orientation  = reveiver.moving_average(10)
+destination_gps = (38.827675, -77.305605)
 
 # vlts = ImageSegmenter("/home/robotixx/Amit/er/configs/mask2former_evaclip_2xb8_5k_gta2cityscapes.py", "/home/robotixx/Amit/er/checkpoin/vltseg_checkpoint_cityscapes_1.pth", 'cuda', {"load_from": '/home/robotixx/Amit/er/checkpoin/vltseg_checkpoint_cityscapes_1.pth'})
  
@@ -51,34 +44,23 @@ direction = "STRAIGHT"
 entered_node = False
 turn_int = 1 
 # print("i am here")
+resolution = 0.00539
+
 prev_time = 0.0
 prev_img_timestamp = 0.0
 gps_buffer = []
 best_v_out, best_omega_out = 0,0
 start_time = time.time()
 prev_gps = 0 
-# tracker.draw_map()
-# print("the length of the edge geom is ",len(tracker.route_edges))
-from geopy.distance import geodesic
-def calculate_distance_geopy(coord1, coord2):
-    """
-    Calculate distance in meters between two GPS coordinates.
-    coord1, coord2: tuples (latitude, longitude)
-    """
-    return geodesic(coord1, coord2).meters
 
-# name_x, name_y, avg_x, max_x, avg_y, max_y = calibrate_magnetometer(reveiver, controller)
 while True:
     data = reveiver.fetch_bot_data()
-
     if prev_time != data["timestamp"]:
-
         # print( "not _skipped",data)
         prev_time = data["timestamp"]
         rpm_data = data['rpms'][-1][0:4]
         gps_lat_avg =data["latitude"]
         gps_lon_avg = data["longitude"]
-
         orientation = ros_publisher.calculate_compass_angle(data["mags"][-1][1], data["mags"][-1][2])
         current_gps = (gps_lat_avg, gps_lon_avg)
         linear_velocity,angular_velocity = compute_velocity_from_rpms(rpm_data)
@@ -92,70 +74,26 @@ while True:
     # visualizer.update(gps_data=(current_gps))
     # print("skipped",data["timestamp"])
     image = reveiver.parse_image(camera="front")
-
+    print(ros_publisher.get_latest_data(),"this shit is subsriber by the way")
     ros_publisher.publish_image(np.array(image))
-    geopy_dist = calculate_distance_geopy(current_gps,tracker.route_gps_coords[node])
     distance, bearing = tracker.get_distance_to_next(current_gps, next_node_index= node) 
-    projected_distance = tracker.get_projected_distance(current_gps,next_node_index = 0)
-    if distance <=5 :
-        node = node+1
-    bearing = calculate_bearing(tracker.route_gps_coords[node], current_gps)
-
-    delta_angle = (bearing - orientation + 360) % 360
-    print("why not working ")
-
-    if delta_angle > 180:
-        delta_angle -= 360
-    # print(f"{delta_angle = }, {distance =} {projected_distance =} {orientation=}\n")
-    # steering = 0.11
-    # if abs(delta_angle) >= 40:
-    #     Recalibrate = True
-    # elif Recalibrate and abs(delta_angle) <= 10:
-    #     Recalibrate = False
-    #     controller.send_control_command(0.0,0.0)
-    #     time.sleep(5)
-    # # Apply steering only if in recalibration mode
-    # if Recalibrate:
-    #     print("Recalibrating ................")
-    #     if delta_angle < 0:  # turn left
-    #         steering *= 1
-    #     else:  # turn right
-    #         steering *= -1
-
-    #     controller.send_control_command(0.0, steering)
-    #     time.sleep(0.1)
-    #     continue
-    
-    # if abs(delta_angle) <= 20:
-    #     Recalibrate = False
-    # elif abs(delta_angle) >= 40:
-    #     Recalibrate = True
-    #     # print("Recalibrating ................ \n")
-
-    # # print(delta_angle, "delta angle",tracker.route_gps_coords[node], "node", node, math.degrees(bearing), math.degrees(current_orientation))
-    # if abs(delta_angle) >= 40 or Recalibrate == True:
-    #     Recalibrate = True
-    #     print("Recalibrating ................")
-    #     if delta_angle < 0: # turn left
-    #         steering *= 1 
-    #     else:
-    #         steering *= -1
-        
-    #     controller.send_control_command(0.0, steering)
-        # print("steering", steering, delta_angle,bearing, current_orientation)
-        # time.sleep(0.1)
-        # continue
+    # projected_distance = tracker.get_projected_distance
+    error = (orientation - bearing + 360) % 360
+    # print(current_gps)
+    if error > 180:
+        error -= 360
     # print("the error in the angle is and the error distance , current_gps and route,node ",error, distance, current_gps, route, node)
-
-    if abs(delta_angle) < 20:
+    if distance  <=6 :
+        node = node+1
+        # print("NOOOOOOOOODE CHANGED")
+        error = 0 
+        # print("node changed")
+    if abs(error) <= 20:
         direction = "STRAIGHT"
-    elif delta_angle > 20:
-        direction = "RIGHT"
-    elif delta_angle < -20:
+    elif error > 0:
+        dorientationirection = "RIGHT"
+    else:
         direction = "LEFT"
-    print(f"{delta_angle = }, {distance =} {projected_distance =} {orientation=} {node= } {geopy_dist =} {tracker.route_utm_coords} {direction}\n")
-
-
     # image = np.array(image)
     # seg_mask = inf.segment_image(image, "/home/kintou/Work/Robotixx/er/configs/mask2former_evaclip_2xb8_1k_frozen_gta2cityscapes.py", "/home/kintou/Work/Robotixx/er/checkpoin/vltseg_checkpoint_cityscapes_2.pth", 'cuda', {"load_from": '/home/kintou/Work/Robotixx/er/checkpoin/vltseg_checkpoint_cityscapes_2.pth'})
     seg_mask = Segmentationmodel.predict(image)
@@ -163,25 +101,21 @@ while True:
     seg_mask = ptransform.inverse_perspective_mapping(seg_mask)
     origin = (seg_mask.shape[0]-1, seg_mask.shape[1]//2)
     start_px = (origin[0],origin[1])
-    cols, rows = local_goal_selection(seg_mask,direction = direction, row_search=100)
+    cols, rows = local_goal_selection(seg_mask,direction = direction, row_search=220)
     goal_px = (rows, cols)
     start_metric = pixel_to_metric(start_px[1], start_px[0], resolution, origin)  # (px, py)
     goal_metric = pixel_to_metric(goal_px[1], goal_px[0], resolution, origin) 
     current_state = [start_metric[0], start_metric[1], np.pi / 2, linear_velocity, angular_velocity] 
-    
-    try:
-        best_v_out,best_omega_out,best_trajectory, best_px, costmap = planner.plan(current_state, goal_metric, seg_mask, label2name_all,resolution, origin)
-    except:
-        continue
+    best_v_out,best_omega_out,best_trajectory, best_px, costmap = planner.plan(current_state, goal_metric, seg_mask, label2name_all,resolution, origin)
     # save_data(costmap, "cost_map")    print(best_v, best_omega,"best_v, best_omega")
-    # print(best_v_out, best_omega_out, best_trajectory,"best_v, best_omega \n")
-    best_v,best_omega = normalize_velocity(best_v_out, best_omega_out )
-    controller.send_control_command( best_v,best_omega)
+    # print(best_v_out, best_omega_out,"best_v, best_omega")
+    # best_v,best_omega = normalize_velocity(best_v_out, best_omega_out )
+    controller.send_control_command(best_v_out, best_omega_out)
     # if time.time()- start_time<=400:is is the orientation
     #     controller.send_control_command(0.15, 0)
     # else:
     #     controller.send_control_command(0, 0)
-    # visualizer.update(image =np.array(image),seg_mask = seg_mask)
+    # visualizer.update(image =np.array(image),seg_mask = Seg_mask,traj_data=visualize_trajectory_with_opencv(costmap, best_px,start_px, goal_px))
     # visualize_trajectory(costmap, best_px,start_px, goal_px)
     # print(end_dist, "end_dist")
     time.sleep(.01)

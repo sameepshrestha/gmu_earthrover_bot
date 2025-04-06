@@ -2,6 +2,7 @@ import threading
 import requests
 import time 
 BASE_URL = "http://localhost:8000"
+
 class BotController:
     def __init__(self, base_url):
         self.base_url = base_url

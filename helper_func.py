@@ -6,12 +6,72 @@ import cv2
 import matplotlib.pyplot as plt 
 import osmnx as ox
 from collections import deque
+import math
+import math
+import numpy as np
+from itertools import permutations, product
+
+def test_all_heading_candidates(x_lsb, y_lsb, z_lsb, conversion_factor=3000.0):
+    """
+    Given raw magnetometer readings in LSB, this function converts them to Gauss and
+    computes headings using every candidate mapping of sensor axes to the horizontal plane,
+    including sign inversions.
+    
+    We assume we want EAST as 0° (i.e. when the east axis is maximally positive and north is near 0).
+    
+    For each candidate, we consider:
+      - An ordered pair (axis_for_east, axis_for_north) from x, y, z (6 permutations)
+      - Each axis can be taken as positive or negative (2x2 = 4 possibilities)
+    
+    Returns a dictionary where keys are strings describing the candidate mapping and
+    values are the computed heading (in degrees, normalized to [0, 360)).
+    """
+    # Convert raw values to Gauss
+    sensor_data = {
+        'x': x_lsb / conversion_factor,
+        'y': y_lsb / conversion_factor,
+        'z': z_lsb / conversion_factor
+    }
+    
+    candidates = {}
+    
+    # Iterate over all ordered pairs of axes
+    for (east_axis, north_axis) in permutations(sensor_data.keys(), 2):
+        # Try both positive and negative for each axis
+        for east_sign, north_sign in product([1, -1], repeat=2):
+            east_val = east_sign * sensor_data[east_axis]
+            north_val = north_sign * sensor_data[north_axis]
+            
+            # Compute heading: atan2(north, east) gives 0 when east is positive and north is 0.
+            heading = math.degrees(math.atan2(north_val, east_val))
+            heading_normalized = (heading + 360) % 360
+            
+            # Create a descriptive key for this candidate
+            key = f"{east_sign:+d}{east_axis} as east, {north_sign:+d}{north_axis} as north"
+            candidates[key] = heading_normalized
+            
+    return candidates
+
+
 def normalize_velocity(linear_velocity, angular_velocity, 
                        max_linear_speed=0.9722, max_angular_speed=1):  # 3.5 km/hr in m/s (~0.9722 m/s)
 
     norm_linear = np.clip(linear_velocity / max_linear_speed, 0, 1)
     norm_angular = np.clip(angular_velocity / max_angular_speed, -1, 1)
     return norm_linear, norm_angular
+
+def calculate_compass_angle(x_lsb, y_lsb, z_lsb):
+    # Convert LSB Raw Data to Gauss
+    x_gauss = x_lsb / 3000.0
+    y_gauss = y_lsb / 3000.0
+    z_gauss = z_lsb / 3000.0
+    north = -z_gauss
+    west = y_gauss
+    # Calculate the heading in degrees
+    heading = math.atan2(north, west) * 180 / np.pi
+    # Normalize the heading to 0-360 degrees
+    heading_deg = (heading + 360) % 360
+    return heading_deg
 
 def compute_velocity_from_rpms(rpms, wheel_radius=0.05, wheel_base=0.25):
 
@@ -178,6 +238,7 @@ def visualize_trajectory_with_opencv(cost_map, trajectory_px, start_px, goal_px,
     cv2.imwrite(save_file, cost_map_with_trajectory)
     # Return the processed image (RGB format)
     return cost_map_with_trajectory
+
 class ImcrementatlVisualizer:
     def __init__(self, height= 576, width = 1024, gps_tracker = None):
         self.height = height 
@@ -218,3 +279,45 @@ class ImcrementatlVisualizer:
 
 
             
+def rotation_planner(error, current_heading, desired_bearing, controller,ros_publisher):
+    controller.send_control_command(0, 0)  
+    turn_direction = np.sign(error)  # +1 for left, -1 for right
+    while abs(error) > 0.26:  # Keep turning until within ~15 degrees
+        controller.send_control_command(0, turn_direction * 0.15)  # Rotate at speed 0.2 rad/s
+        time.sleep(0.1)  # Allow time for execution (adjust as needed)
+        # Update current heading (replace with actual sensor/IMU feedback)
+        _,current_heading = ros_publisher.get_latest_data() 
+        # print(current_heading) 
+        error = (desired_bearing - current_heading + np.pi) % (2 * np.pi) - np.pi  # Recompute error
+    # Stop turning once aligned
+    controller.send_control_command(0, 0)
+    
+def calculate_bearing(point1, point2):
+    """
+    Calculate the bearing from point2 to point1 with East as 0°.
+    
+    Parameters:
+        point1: Tuple (lat1, lon1) - Latitude and Longitude of target point in degrees.
+        point2: Tuple (lat2, lon2) - Latitude and Longitude of robot position in degrees.
+    
+    Returns:
+        Bearing in degrees with East as 0°.
+    """
+    lat1, lon1 = point1
+    lat2, lon2 = point2
+
+    # Convert degrees to radians
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    delta_lambda = math.radians(lon1 - lon2)
+
+    # Compute bearing
+    y = math.sin(delta_lambda) * math.cos(phi1)
+    x = math.cos(phi2) * math.sin(phi1) - math.sin(phi2) * math.cos(phi1) * math.cos(delta_lambda)
+    bearing_rad = math.atan2(y, x)
+
+    # Convert to degrees and adjust to East = 0° system
+    bearing_deg = math.degrees(bearing_rad)
+    bearing_east =  (bearing_deg - 90 + 360) % 360 % 360
+
+    return round(bearing_east, 2)
+

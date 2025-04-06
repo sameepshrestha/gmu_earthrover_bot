@@ -65,20 +65,20 @@ class DWAPlanner:
                 # 3.2. Semantic Cost Map Configuration
         self.COST_MAP = {
             "road": 0,
-            "sidewalk": 0.1,
+            "sidewalk": 0,
             "building": 1.0,
             "wall": 1.0,
             "fence": 1,
             "pole": 1,
             "traffic light": 1,
             "traffic sign": 1,
-            "vegetation": 0.7,
-            "terrain": 0.4,
+            "vegetation": 1,
+            "terrain": 1,
             "sky": 1.0,
             "person": 1.0,
             "rider": 1.0,
-            "car": .95,
-            "truck": .90,
+            "car": 1.0,
+            "truck": 1.0,
             "bus": 1.0,
             "train": 1.0,
             "motorcycle": 1.0,
@@ -91,25 +91,28 @@ class DWAPlanner:
         for idx, class_name in class_indices.items():
             mask = semantic_map == idx
             cost_map[mask] = self.COST_MAP.get(class_name, 1.0)
-        cost_map = gaussian_filter(cost_map, sigma=self.gaussian_sigma)
-        print("Cost Map Stats:")
-        print(f"  Min Cost: {np.min(cost_map):.3f}, Max Cost: {np.max(cost_map):.3f}, Mean Cost: {np.mean(cost_map):.3f}")
+        # print("Cost Map Stats:")
+        # print(f"  Min Cost: {np.min(cost_map):.3f}, Max Cost: {np.max(cost_map):.3f}, Mean Cost: {np.mean(cost_map):.3f}")
         return cost_map
 
     def calc_semantic_cost(self, traj_x: List[float], traj_y: List[float],
-                           cost_map: np.ndarray, resolution: float, origin: Tuple[int, int]) -> float:
+                        cost_map: np.ndarray, resolution: float, origin: Tuple[int, int]) -> float:
         cost = 0.0
-        traversable_threshold = 0.5
+        count = 0  # Initialize the counter
         for x, y in zip(traj_x, traj_y):
             px, py = metric_to_pixel(x, y, resolution, origin)
             map_x, map_y = int(px), int(py)
             if 0 <= map_x < cost_map.shape[1] and 0 <= map_y < cost_map.shape[0]:
-                cost += cost_map[map_y, map_x]
-                if cost_map[map_y, map_x] > traversable_threshold:
+                val = cost_map[map_y, map_x]
+                # If the pixel cost indicates a full obstacle, return infinity
+                if val == 1:
                     return float('inf')
+                cost += val
+                count += 1   
             else:
-                return float('inf')
-        return cost / len(traj_x) if traj_x else 0.0
+                return float('inf')  # Out of bounds: penalize heavily
+        return cost / count if count > 0 else 0.0
+
 
     def calc_heading_cost(self, traj_x: List[float], traj_y: List[float], traj_yaw: List[float], goal: List[float]) -> float:
         dx = goal[0] - traj_x[-1]

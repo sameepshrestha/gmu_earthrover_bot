@@ -1,0 +1,20 @@
+<package format="2">
+  <name>robot_navigation</name>
+  <version>0.0.1</version>
+  <maintainer email="shsres32@gmu.edu">Sameep</maintainer>
+  <description>Robot navigation package for controlling and moving the robot</description>
+
+  <license>BSD</license>
+
+  <!-- Dependencies -->
+  <depend>rospy</depend>        <!-- For Python ROS nodes -->
+  <depend>std_msgs</depend>     <!-- For standard messages like String, Int32, etc. -->
+  <depend>nav_msgs</depend>     <!-- For nav_msgs like Odometry -->
+  <depend>sensor_msgs</depend>  <!-- If you’re working with sensor data like IMU or GPS -->
+  <depend>geometry_msgs</depend> <!-- For geometry-related messages like Pose, Twist -->
+
+  <!-- Optional build dependencies -->
+  <build_depend>catkin</build_depend>
+
+  <!-- <exec_depend>rospy</exec_depend> -->
+</package>
