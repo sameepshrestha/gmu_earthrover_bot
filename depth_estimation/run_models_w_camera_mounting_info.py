@@ -107,7 +107,7 @@ def test_single(depth_estimator, directory, depth_reference_val=10.0):
         camera_tilt_deg=10.0        # positive = downward tilt
     )
 
-depth1 = np.asarray(depth1) * max_depth / 255.0
+    depth1 = np.asarray(depth1) * max_depth / 255.0
 
 
     average_time.append(time.time() - start_time)
